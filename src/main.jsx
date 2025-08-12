@@ -511,9 +511,14 @@ function Reservar() {
   const { user, createReserva, uploadComprobante, getComprobanteSignedUrl } = useApp();
   const nav = useNavigate();
   const [form, setForm] = useState({ nombre: user?.name || "", telefono: "", carrera: CARRERAS[0], semestre: SEMESTRES[0], cantidad: limitsFor("Periquera").min, tipo: "Periquera", comprobanteUrl: null });
+  const [cantStr, setCantStr] = useState(String(limitsFor("Periquera").min));
   const [previewUrl, setPreviewUrl] = useState(null);
   const { min, max } = limitsFor(form.tipo);
-  useEffect(() => { setForm(v => ({ ...v, cantidad: Math.min(max, Math.max(min, Number(v.cantidad || 1))) })); }, [form.tipo]);
+  useEffect(() => {
+    const n = Math.min(max, Math.max(min, parseInt(cantStr || "0", 10) || min));
+    setCantStr(String(n));
+    setForm(v => ({ ...v, cantidad: n }));
+  }, [form.tipo]);
   const onFile = async (f) => {
     if (!f) { setForm(v => ({ ...v, comprobanteUrl: null })); setPreviewUrl(null); return; }
     try {
@@ -525,7 +530,16 @@ function Reservar() {
       alert(`No se pudo subir el comprobante: ${e.message || e}`);
     }
   };
-  const onCantidad = (val) => { const n = parseInt(val || "1", 10); setForm(v => ({ ...v, cantidad: Math.min(max, Math.max(min, isNaN(n) ? 1 : n)) })); };
+  const onCantidadChange = (value) => {
+    const digits = String(value || '').replace(/\D/g, '');
+    setCantStr(digits);
+  };
+
+  const onCantidadBlur = () => {
+    const n = Math.min(max, Math.max(min, parseInt(cantStr || '0', 10) || 0));
+    setCantStr(String(n));
+    setForm(v => ({ ...v, cantidad: n }));
+  };
   const submit = async () => {
     try {
       // Sanitiza y valida teléfono (exactamente 10 dígitos)
@@ -539,13 +553,14 @@ function Reservar() {
         alert('Adjunte el comprobante de pago, por favor.');
         return;
       }
-      await createReserva({ ...form, telefono: tel });
+      const cantidadFinal = Math.min(max, Math.max(min, parseInt(cantStr || '0', 10) || 0));
+      await createReserva({ ...form, cantidad: cantidadFinal, telefono: tel });
       nav('/mi-boleto');
     } catch (e) {
       alert(e.message || 'No se pudo crear la reservación');
     }
   };
-  const total = (Number(form.cantidad || 1) * PRECIO);
+  const total = (Math.min(max, Math.max(min, parseInt(cantStr || '0', 10) || 0)) * PRECIO);
   return (
     <Shell>
       <div className="max-w-3xl mx-auto bg-white rounded-2xl border shadow-sm p-6">
@@ -577,7 +592,19 @@ function Reservar() {
               {SEMESTRES.map(s => <option key={s} value={s}>{s}°</option>)}
             </select>
           </div>
-          <div><label className="block text-sm mb-1">Cantidad de Entradas</label><input type="number" min={min} max={max} className="w-full border rounded-lg px-3 py-2" value={form.cantidad} onChange={(e) => onCantidad(e.target.value)} /><p className="text-xs text-neutral-500 mt-1">{form.tipo === "Sala" ? `Mínimo ${min}` : `Entre ${min} y ${max}`}</p></div>
+          <div>
+            <label className="block text-sm mb-1">Cantidad de Entradas</label>
+            <input
+              type="tel"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              className="w-full border rounded-lg px-3 py-2"
+              value={cantStr}
+              onChange={(e) => onCantidadChange(e.target.value)}
+              onBlur={onCantidadBlur}
+            />
+            <p className="text-xs text-neutral-500 mt-1">{form.tipo === "Sala" ? `Mínimo ${min}` : `Entre ${min} y ${max}`}</p>
+          </div>
           <div><label className="block text-sm mb-1">Tipo de Reservación</label><select className="w-full border rounded-lg px-3 py-2" value={form.tipo} onChange={e => setForm(v => ({ ...v, tipo: e.target.value }))}><option>Periquera</option><option>Sala</option></select></div>
           <div className="sm:col-span-2">
             <label className="block text-sm mb-1">Comprobante de Pago</label>
