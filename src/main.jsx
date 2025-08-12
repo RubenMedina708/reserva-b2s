@@ -511,12 +511,14 @@ function Reservar() {
   const { user, createReserva, uploadComprobante, getComprobanteSignedUrl } = useApp();
   const nav = useNavigate();
   const [form, setForm] = useState({ nombre: user?.name || "", telefono: "", carrera: CARRERAS[0], semestre: SEMESTRES[0], cantidad: limitsFor("Periquera").min, tipo: "Periquera", comprobanteUrl: null });
-  const [cantStr, setCantStr] = useState(String(limitsFor("Periquera").min));
+  const [cantidad, setCantidad] = useState(limitsFor("Periquera").min);
+  const [cantidadStr, setCantidadStr] = useState(String(limitsFor("Periquera").min));
   const [previewUrl, setPreviewUrl] = useState(null);
   const { min, max } = limitsFor(form.tipo);
   useEffect(() => {
-    const n = Math.min(max, Math.max(min, parseInt(cantStr || "0", 10) || min));
-    setCantStr(String(n));
+    const n = min;
+    setCantidad(n);
+    setCantidadStr(String(n));
     setForm(v => ({ ...v, cantidad: n }));
   }, [form.tipo]);
   const onFile = async (f) => {
@@ -532,12 +534,13 @@ function Reservar() {
   };
   const onCantidadChange = (value) => {
     const digits = String(value || '').replace(/\D/g, '');
-    setCantStr(digits);
+    setCantidadStr(digits);
   };
 
   const onCantidadBlur = () => {
-    const n = Math.min(max, Math.max(min, parseInt(cantStr || '0', 10) || 0));
-    setCantStr(String(n));
+    const n = Math.min(max, Math.max(min, parseInt(cantidadStr || '0', 10) || 0));
+    setCantidad(n);
+    setCantidadStr(String(n));
     setForm(v => ({ ...v, cantidad: n }));
   };
   const submit = async () => {
@@ -553,14 +556,14 @@ function Reservar() {
         alert('Adjunte el comprobante de pago, por favor.');
         return;
       }
-      const cantidadFinal = Math.min(max, Math.max(min, parseInt(cantStr || '0', 10) || 0));
+      const cantidadFinal = Math.min(max, Math.max(min, parseInt(cantidadStr || '0', 10) || 0));
       await createReserva({ ...form, cantidad: cantidadFinal, telefono: tel });
       nav('/mi-boleto');
     } catch (e) {
       alert(e.message || 'No se pudo crear la reservación');
     }
   };
-  const total = (Math.min(max, Math.max(min, parseInt(cantStr || '0', 10) || 0)) * PRECIO);
+  const total = (Math.min(max, Math.max(min, parseInt(cantidadStr || '0', 10) || 0)) * PRECIO);
   return (
     <Shell>
       <div className="max-w-3xl mx-auto bg-white rounded-2xl border shadow-sm p-6">
@@ -599,7 +602,7 @@ function Reservar() {
               inputMode="numeric"
               pattern="[0-9]*"
               className="w-full border rounded-lg px-3 py-2"
-              value={cantStr}
+              value={cantidadStr}
               onChange={(e) => onCantidadChange(e.target.value)}
               onBlur={onCantidadBlur}
             />
