@@ -666,6 +666,7 @@ function AdminPage() {
 function ScannerPage() {
   const { reservas, descontarFor, isAdmin } = useApp();
   const [scan, setScan] = useState(null);
+  const [cantidad, setCantidad] = useState(1);
   const [cantidadStr, setCantidadStr] = useState("1");
   const [scanning, setScanning] = useState(false);
   const [videoKey, setVideoKey] = useState(0);
@@ -754,7 +755,13 @@ function ScannerPage() {
   const stopScan = () => { hardStopCamera(); };
 
   const reserva = useMemo(() => reservas.find(r => r.id === scan?.id), [scan?.id, reservas]);
-  useEffect(() => { if (reserva) setCantidadStr(reserva.restantes > 0 ? "1" : "0"); }, [reserva?.restantes]);
+  useEffect(() => {
+    if (reserva) {
+      const start = reserva.restantes > 0 ? 1 : 0;
+      setCantidad(start);
+      setCantidadStr(String(start));
+    }
+  }, [reserva?.restantes]);
 
   const max = Math.max(0, reserva?.restantes || 0);
 
@@ -802,9 +809,9 @@ function ScannerPage() {
                   }}
                   onBlur={() => {
                     if (max===0) return;
-                    const n = parseInt(cantidadStr || "0", 10) || 0;
-                    if (n < 1) setCantidadStr("1");
-                    else if (n > max) setCantidadStr(String(max));
+                    const n = Math.min(Math.max(parseInt(cantidadStr || "0", 10) || 0, 1), max);
+                    setCantidad(n);
+                    setCantidadStr(String(n));
                   }}
                   placeholder="1"
                   className="w-28 border rounded-lg px-3 py-2"
@@ -812,7 +819,7 @@ function ScannerPage() {
                 <button
                   disabled={max===0}
                   onClick={async () => {
-                    const n = Math.min(parseInt(cantidadStr||"0",10)||0, max);
+                    const n = Math.min(parseInt(cantidadStr || "0", 10) || 0, max);
                     if (n < 1) { alert('Ingresa al menos 1'); return; }
                     await descontarFor(reserva.id, n);
                     const remaining = (reserva?.restantes || 0) - n;
@@ -821,6 +828,7 @@ function ScannerPage() {
                       setScan(null);
                     } else {
                       setScan(null);
+                      setCantidadStr("1");
                       setTimeout(() => startScan(), 150);
                     }
                   }}
