@@ -666,7 +666,7 @@ function AdminPage() {
 function ScannerPage() {
   const { reservas, descontarFor, isAdmin } = useApp();
   const [scan, setScan] = useState(null);
-  const [cantidad, setCantidad] = useState(1);
+  const [cantidadStr, setCantidadStr] = useState("1");
   const [scanning, setScanning] = useState(false);
   const [videoKey, setVideoKey] = useState(0);
   const videoRef = React.useRef(null);
@@ -754,7 +754,7 @@ function ScannerPage() {
   const stopScan = () => { hardStopCamera(); };
 
   const reserva = useMemo(() => reservas.find(r => r.id === scan?.id), [scan?.id, reservas]);
-  useEffect(() => { if (reserva) setCantidad(Math.max(1, Math.min(1, reserva.restantes)) + 0); }, [reserva?.restantes]);
+  useEffect(() => { if (reserva) setCantidadStr(reserva.restantes > 0 ? "1" : "0"); }, [reserva?.restantes]);
 
   const max = Math.max(0, reserva?.restantes || 0);
 
@@ -790,14 +790,30 @@ function ScannerPage() {
             <div className="rounded-lg border p-4">
               <label className="block text-sm mb-2"><b>Cantidad de personas que entran:</b></label>
               <div className="flex items-center gap-3">
-                <input type="number" min={1} max={max} disabled={max===0} value={max===0?0:cantidad} onChange={(e)=>{
-                  const v = parseInt(e.target.value||"1",10);
-                  setCantidad(Math.max(1, Math.min(v, max)));
-                }} className="w-28 border rounded-lg px-3 py-2"/>
+                <input
+                  type="tel"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  disabled={max===0}
+                  value={max===0 ? "0" : cantidadStr}
+                  onChange={(e) => {
+                    const digits = e.target.value.replace(/\D/g, "");
+                    setCantidadStr(digits);
+                  }}
+                  onBlur={() => {
+                    if (max===0) return;
+                    const n = parseInt(cantidadStr || "0", 10) || 0;
+                    if (n < 1) setCantidadStr("1");
+                    else if (n > max) setCantidadStr(String(max));
+                  }}
+                  placeholder="1"
+                  className="w-28 border rounded-lg px-3 py-2"
+                />
                 <button
                   disabled={max===0}
                   onClick={async () => {
-                    const n = Math.min(cantidad, max);
+                    const n = Math.min(parseInt(cantidadStr||"0",10)||0, max);
+                    if (n < 1) { alert('Ingresa al menos 1'); return; }
                     await descontarFor(reserva.id, n);
                     const remaining = (reserva?.restantes || 0) - n;
                     if (remaining <= 0) {
@@ -816,6 +832,7 @@ function ScannerPage() {
                   onClick={() => {
                     hardStopCamera();
                     setScan(null);
+                    setCantidadStr("1");
                     setTimeout(() => startScan(), 150);
                   }}
                   className="px-4 py-2 rounded-lg border"
