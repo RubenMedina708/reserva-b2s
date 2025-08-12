@@ -140,7 +140,7 @@ function AppProvider({ children }) {
     tipo: row.tipo_reserva || "Periquera",
     estado: row.estado || "pendiente",
     confirmadas: row.cantidad || 0,
-    restantes: typeof row.restantes === "number" ? row.restantes : (row.cantidad || 0),
+    restantes: Number.isInteger(row.restantes) ? row.restantes : 0,
     comprobanteUrl: row.comprobante || row.comprobante_url || null,
     qr: row.qr || null,
   });
@@ -172,6 +172,11 @@ function AppProvider({ children }) {
     (isAdmin ? loadAllReservas : loadMyReserva)();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.email, isAdmin]);
+
+  // Helper para refrescar reservas desde la DB (según rol)
+  const refreshReservas = async () => {
+    await (isAdmin ? loadAllReservas : loadMyReserva)();
+  };
 
   // Realtime para refrescar listas
   useEffect(() => {
@@ -298,7 +303,7 @@ function AppProvider({ children }) {
     // evento / reservas
     eventActive, setEventActive,
     reservas, myReservaId,
-    createReserva, generarQRFor, rejectReserva, deleteReserva, descontarFor,
+    createReserva, generarQRFor, rejectReserva, deleteReserva, descontarFor, refreshReservas,
   };
 
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;
@@ -542,8 +547,32 @@ function Reservar() {
 }
 
 function MiBoleto() {
-  const { reservas, user } = useApp();
+  const { reservas, user, refreshReservas } = useApp();
   const my = React.useMemo(() => reservas.filter(r => r.userEmail === user?.email), [reservas, user?.email]);
+
+  React.useEffect(() => {
+    if (!user?.email) return;
+    // Realtime for only my rows
+    const chan = supabase
+      .channel(`ticket-${user.email}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'users', filter: `email=eq.${user.email}` }, () => {
+        refreshReservas();
+      })
+      .subscribe();
+
+    // Also refresh when tab becomes visible
+    const onVis = () => { if (document.visibilityState === 'visible') refreshReservas(); };
+    document.addEventListener('visibilitychange', onVis);
+
+    // Initial refresh to ensure latest data
+    refreshReservas();
+
+    return () => {
+      supabase.removeChannel(chan);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+  }, [user?.email, refreshReservas]);
+
   return (
     <Shell>
       <div className="max-w-3xl mx-auto space-y-6">
