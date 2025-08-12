@@ -43,7 +43,11 @@ const CARRERAS = [
 ];
 const SEMESTRES = ["1","2","3","4","5","6","7","8","9","10"];
 
-function limitsFor(tipo) { return tipo === "Sala" ? { min: 10, max: MAX_ENTRADAS } : { min: 1, max: MAX_ENTRADAS }; }
+function limitsFor(tipo) {
+  return tipo === "Sala"
+    ? { min: 10, max: MAX_ENTRADAS }
+    : { min: 3, max: MAX_ENTRADAS }; // Periquera: mínimo 3
+}
 
 // --- Provider con sesión Supabase ---
 function AppProvider({ children }) {
@@ -110,7 +114,14 @@ function AppProvider({ children }) {
     if (error) throw error;
   };
 
-  const signOut = async () => { await supabase.auth.signOut(); };
+  const signOut = async () => {
+  const { error } = await supabase.auth.signOut();
+  setSession(null);
+  setIsAdmin(false);
+  setReservas([]);
+  setMyReservaId(null);
+  return error || null;
+};
 
   const resendConfirmation = async (email) => {
     const { error } = await supabase.auth.resend({ type: "signup", email });
@@ -202,7 +213,7 @@ function AppProvider({ children }) {
 
     const r = dbToReserva(data);
     setMyReservaId(r.id);
-    setReservas([r]);
+    setReservas(prev => [r, ...(prev || [])]);
   };
 
   const generarQRFor = async (id) => {
@@ -263,6 +274,17 @@ function AppProvider({ children }) {
     (isAdmin ? loadAllReservas : loadMyReserva)();
   };
 
+  const deleteReserva = async (id) => {
+    if (!isAdmin) return;
+    if (!id) return;
+    const { error } = await supabase
+      .from("users")
+      .delete()
+      .eq("id", id);
+    if (error) throw error;
+    (isAdmin ? loadAllReservas : loadMyReserva)();
+  };
+
   const descontarFor = async (id, n) => {
     if (!isAdmin) return;
     const { error } = await supabase.rpc("decrementar_restantes", { p_id: id, p_n: n });
@@ -276,7 +298,7 @@ function AppProvider({ children }) {
     // evento / reservas
     eventActive, setEventActive,
     reservas, myReservaId,
-    createReserva, generarQRFor, rejectReserva, descontarFor,
+    createReserva, generarQRFor, rejectReserva, deleteReserva, descontarFor,
   };
 
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;
@@ -286,7 +308,7 @@ function AppProvider({ children }) {
 function Header() {
   const { user, isAdmin, signOut } = useApp();
   return (
-    <header className="sticky top-0 z-40 bg-white/90 backdrop-blur border-b">
+    <header className="sticky top-0 z-40 bg-white/90 backdrop-blur border-b" style={{ paddingTop: 'env(safe-area-inset-top)' }}>
       <div className="max-w-6xl mx-auto px-4 py-3 flex items-center gap-4">
         <Link to="/" className="font-extrabold tracking-tight text-indigo-600">CESA ITSU</Link>
         <nav className="ms-2 hidden sm:flex items-center gap-6 text-sm text-neutral-700">
@@ -326,7 +348,8 @@ function Shell({ children }) {
     <div className="min-h-screen bg-neutral-50 text-neutral-900">
       <Header />
       <main className="max-w-6xl mx-auto px-4 py-6">{children}</main>
-      <footer className="border-t text-center text-xs text-neutral-500 py-6">
+      <footer  className="border-t text-center text-xs text-neutral-500 py-6"
+  style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
         © 2025 CESA – Comité Ejecutivo de la Sociedad de Alumnos · <span className="inline-flex items-center gap-1"><span>📷</span> @cesa.itsu <span className="text-green-600">✔︎</span></span>
       </footer>
     </div>
@@ -452,17 +475,28 @@ function RequireAuth({ children }) {
 function Reservar() {
   const { user, createReserva } = useApp();
   const nav = useNavigate();
-  const [form, setForm] = useState({ nombre: user?.name || "", telefono: "", carrera: CARRERAS[0], semestre: SEMESTRES[0], cantidad: 1, tipo: "Periquera", comprobanteUrl: null });
+  const [form, setForm] = useState({ nombre: user?.name || "", telefono: "", carrera: CARRERAS[0], semestre: SEMESTRES[0], cantidad: limitsFor("Periquera").min, tipo: "Periquera", comprobanteUrl: null });
   const { min, max } = limitsFor(form.tipo);
   useEffect(() => { setForm(v => ({ ...v, cantidad: Math.min(max, Math.max(min, Number(v.cantidad || 1))) })); }, [form.tipo]);
   const onFile = (f) => { if (!f) return setForm(v => ({ ...v, comprobanteUrl: null })); const reader = new FileReader(); reader.onload = () => setForm(v => ({ ...v, comprobanteUrl: reader.result })); reader.readAsDataURL(f); };
   const onCantidad = (val) => { const n = parseInt(val || "1", 10); setForm(v => ({ ...v, cantidad: Math.min(max, Math.max(min, isNaN(n) ? 1 : n)) })); };
   const submit = async () => {
     try {
-      await createReserva(form);
-      nav("/mi-boleto");
+      // Sanitiza y valida teléfono (exactamente 10 dígitos)
+      const tel = String(form.telefono || '').replace(/\D/g, '').slice(0, 10);
+      if (tel.length !== 10) {
+        alert('El teléfono debe tener 10 dígitos.');
+        return;
+      }
+      // Verifica que se haya adjuntado el comprobante
+      if (!form.comprobanteUrl) {
+        alert('Adjunte el comprobante de pago, por favor.');
+        return;
+      }
+      await createReserva({ ...form, telefono: tel });
+      nav('/mi-boleto');
     } catch (e) {
-      alert(e.message || "No se pudo crear la reservación");
+      alert(e.message || 'No se pudo crear la reservación');
     }
   };
   const total = (Number(form.cantidad || 1) * PRECIO);
@@ -470,11 +504,26 @@ function Reservar() {
     <Shell>
       <div className="max-w-3xl mx-auto bg-white rounded-2xl border shadow-sm p-6">
         <h2 className="text-2xl font-bold mb-4">Formulario de Reservación</h2>
-        <div className="rounded-lg bg-indigo-50 text-indigo-900 border border-indigo-200 p-3 text-sm mb-4"><b>Instrucciones de Pago:</b> Transfiere <b>${total.toLocaleString("es-MX")} MXN</b> a la cuenta CLABE <b>123456789012345678</b> y adjunta tu comprobante.</div>
+        <div className="rounded-lg bg-indigo-50 text-indigo-900 border border-indigo-200 p-3 text-sm mb-4"><b>Instrucciones de Pago:</b> Transfiere <b>${total.toLocaleString("es-MX")} MXN</b> a la cuenta CLABE <b>137528105116209401</b> y adjunta tu comprobante.</div>
         <div className="rounded-lg bg-neutral-50 border p-3 text-sm mb-6"><b>Información de reservación:</b><ul className="list-disc ms-6 mt-1"><li>Para <b>Sala</b>, mínimo 10 entradas o más.</li><li>Para <b>Periquera</b>, mínimo 3 entradas o más.</li></ul></div>
         <div className="grid sm:grid-cols-2 gap-4">
-          <div><label className="block text-sm mb-1">Nombre Completo</label><input className="w-full border rounded-lg px-3 py-2" value={form.nombre} onChange={e => setForm(v => ({ ...v, nombre: e.target.value }))} /></div>
-          <div><label className="block text-sm mb-1">Número Telefónico</label><input className="w-full border rounded-lg px-3 py-2" value={form.telefono} onChange={e => setForm(v => ({ ...v, telefono: e.target.value }))} /></div>
+          <div>
+            <label className="block text-sm mb-1">Nombre Completo</label>
+            <input className="w-full border rounded-lg px-3 py-2" value={form.nombre} onChange={e => setForm(v => ({ ...v, nombre: e.target.value }))} />
+          </div>
+          <div>
+            <label className="block text-sm mb-1">Número Telefónico</label>
+            <input
+              inputMode="numeric"
+              maxLength={10}
+              className="w-full border rounded-lg px-3 py-2"
+              value={form.telefono}
+              onChange={e => {
+                const digits = e.target.value.replace(/\D/g, '').slice(0, 10);
+                setForm(v => ({ ...v, telefono: digits }));
+              }}
+            />
+          </div>
           <div><label className="block text-sm mb-1">Carrera</label><select className="w-full border rounded-lg px-3 py-2" value={form.carrera} onChange={e => setForm(v => ({ ...v, carrera: e.target.value }))}>{CARRERAS.map(c => <option key={c}>{c}</option>)}</select></div>
           <div>
             <label className="block text-sm mb-1">Semestre</label>
@@ -493,17 +542,18 @@ function Reservar() {
 }
 
 function MiBoleto() {
-  const { reservas } = useApp();
+  const { reservas, user } = useApp();
+  const my = React.useMemo(() => reservas.filter(r => r.userEmail === user?.email), [reservas, user?.email]);
   return (
     <Shell>
       <div className="max-w-3xl mx-auto space-y-6">
         <h2 className="text-2xl font-bold">Tus Boletos</h2>
 
-        {reservas.length === 0 ? (
+        {my.length === 0 ? (
           <div className="bg-white border rounded-2xl p-6 text-center text-neutral-600">
             Aún no has enviado una reservación.
           </div>
-        ) : reservas.map((reserva) => (
+        ) : my.map((reserva) => (
           <div key={reserva.id} className="bg-white border rounded-2xl p-6">
             {reserva.estado !== "pagado" ? (
               <>
@@ -540,7 +590,7 @@ function MiBoleto() {
 }
 
 function AdminPage() {
-  const { isAdmin, eventActive, setEventActive, reservas, generarQRFor, rejectReserva } = useApp();
+  const { isAdmin, eventActive, setEventActive, reservas, generarQRFor, rejectReserva, deleteReserva } = useApp();
   const [preview, setPreview] = useState(null);
   if (!isAdmin) return <NotFound />;
   return (
@@ -576,12 +626,24 @@ function AdminPage() {
                 </div>
                 <div className="md:col-span-1 flex items-center justify-between md:justify-end gap-3">
                   <span className={`px-3 py-1 rounded-full text-xs ${r.estado === "pendiente" ? "bg-yellow-100 text-yellow-800" : r.estado === "pagado" ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-700"}`}>{r.estado}</span>
-                  {r.estado === "pendiente" && (
-                    <>
-                      <button onClick={() => generarQRFor(r.id)} className="text-indigo-600">Confirmar Pago</button>
-                      <button onClick={() => rejectReserva(r.id)} className="text-red-600">Rechazar</button>
-                    </>
-                  )}
+                  <>
+                    {r.estado === "pendiente" && (
+                      <>
+                        <button onClick={() => generarQRFor(r.id)} className="text-indigo-600">Confirmar Pago</button>
+                        <button onClick={() => rejectReserva(r.id)} className="text-red-600">Rechazar</button>
+                      </>
+                    )}
+                    <button
+                      onClick={() => {
+                        if (confirm("¿Eliminar esta reservación? Esta acción no se puede deshacer.")) {
+                          deleteReserva(r.id);
+                        }
+                      }}
+                      className="text-red-700"
+                    >
+                      Eliminar
+                    </button>
+                  </>
                 </div>
               </div>
             ))}
