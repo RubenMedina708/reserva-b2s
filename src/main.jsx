@@ -601,10 +601,23 @@ function Reservar() {
               type="tel"
               inputMode="numeric"
               pattern="[0-9]*"
+              enterKeyHint="done"
               className="w-full border rounded-lg px-3 py-2"
               value={cantidadStr}
               onChange={(e) => onCantidadChange(e.target.value)}
               onBlur={onCantidadBlur}
+              onFocus={(e) => {
+                // Seleccionar todo para que el primer dígito reemplace el valor actual
+                e.target.select();
+                // iOS a veces necesita un tick
+                setTimeout(() => {
+                  try { e.target.setSelectionRange(0, e.target.value.length); } catch {}
+                }, 0);
+              }}
+              onMouseUp={(e) => {
+                // Evitar que el mouseup cancele la selección (Safari/iOS)
+                e.preventDefault();
+              }}
             />
             <p className="text-xs text-neutral-500 mt-1">{form.tipo === "Sala" ? `Mínimo ${min}` : `Entre ${min} y ${max}`}</p>
           </div>
@@ -948,6 +961,7 @@ function ScannerPage() {
                   type="tel"
                   inputMode="numeric"
                   pattern="[0-9]*"
+                  enterKeyHint="done"
                   disabled={max===0}
                   value={max===0 ? "0" : cantidadStr}
                   onChange={(e) => {
@@ -960,6 +974,13 @@ function ScannerPage() {
                     setCantidad(n);
                     setCantidadStr(String(n));
                   }}
+                  onFocus={(e) => {
+                    e.target.select();
+                    setTimeout(() => {
+                      try { e.target.setSelectionRange(0, e.target.value.length); } catch {}
+                    }, 0);
+                  }}
+                  onMouseUp={(e) => { e.preventDefault(); }}
                   placeholder="1"
                   className="w-28 border rounded-lg px-3 py-2"
                 />
