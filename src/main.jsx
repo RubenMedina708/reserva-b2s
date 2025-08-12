@@ -141,7 +141,7 @@ function AppProvider({ children }) {
     estado: row.estado || "pendiente",
     confirmadas: row.cantidad || 0,
     restantes: Number.isInteger(row.restantes) ? row.restantes : 0,
-    comprobanteUrl: row.comprobante || row.comprobante_url || null,
+    comprobanteUrl: row.comprobante_url || null,
     qr: row.qr || null,
   });
 
@@ -297,6 +297,35 @@ function AppProvider({ children }) {
     (isAdmin ? loadAllReservas : loadMyReserva)();
   };
 
+  // --- Storage helpers (comprobantes) ---
+  const uploadComprobante = async (file, emailHint) => {
+    if (!file) throw new Error("Archivo inválido");
+    const safeEmail = (emailHint || user?.email || 'anon').replace(/[^a-zA-Z0-9@._-]/g, '_');
+    const ts = Date.now();
+    const path = `${safeEmail}/${ts}-${file.name}`;
+    const { error } = await supabase.storage.from('comprobantes').upload(path, file, {
+      cacheControl: '3600',
+      upsert: false,
+      contentType: file.type || 'application/octet-stream',
+    });
+    if (error) throw error;
+    return path; // guardamos esta ruta en comprobante_url
+  };
+
+  const getComprobanteSignedUrl = async (path, expiresIn = 300) => {
+    if (!path) return null;
+    const { data, error } = await supabase.storage.from('comprobantes').createSignedUrl(path, expiresIn);
+    if (error) return null;
+    return data.signedUrl;
+  };
+
+  const deleteComprobanteFile = async (id, path) => {
+    if (!isAdmin || !path) return;
+    await supabase.storage.from('comprobantes').remove([path]);
+    await supabase.from('users').update({ comprobante_url: null, updated_at: new Date().toISOString() }).eq('id', id);
+    await (isAdmin ? loadAllReservas() : loadMyReserva)();
+  };
+
   const value = {
     // sesión / auth
     session, user, isAdmin, signUp, signIn, signOut, resendConfirmation,
@@ -304,6 +333,7 @@ function AppProvider({ children }) {
     eventActive, setEventActive,
     reservas, myReservaId,
     createReserva, generarQRFor, rejectReserva, deleteReserva, descontarFor, refreshReservas,
+    uploadComprobante, getComprobanteSignedUrl, deleteComprobanteFile,
   };
 
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;
@@ -478,12 +508,23 @@ function RequireAuth({ children }) {
 
 // --- Reservar / MiBoleto / Admin / Escaner (idénticos a tu demo, usando user.email) ---
 function Reservar() {
-  const { user, createReserva } = useApp();
+  const { user, createReserva, uploadComprobante, getComprobanteSignedUrl } = useApp();
   const nav = useNavigate();
   const [form, setForm] = useState({ nombre: user?.name || "", telefono: "", carrera: CARRERAS[0], semestre: SEMESTRES[0], cantidad: limitsFor("Periquera").min, tipo: "Periquera", comprobanteUrl: null });
+  const [previewUrl, setPreviewUrl] = useState(null);
   const { min, max } = limitsFor(form.tipo);
   useEffect(() => { setForm(v => ({ ...v, cantidad: Math.min(max, Math.max(min, Number(v.cantidad || 1))) })); }, [form.tipo]);
-  const onFile = (f) => { if (!f) return setForm(v => ({ ...v, comprobanteUrl: null })); const reader = new FileReader(); reader.onload = () => setForm(v => ({ ...v, comprobanteUrl: reader.result })); reader.readAsDataURL(f); };
+  const onFile = async (f) => {
+    if (!f) { setForm(v => ({ ...v, comprobanteUrl: null })); setPreviewUrl(null); return; }
+    try {
+      const path = await uploadComprobante(f, user?.email);
+      setForm(v => ({ ...v, comprobanteUrl: path }));
+      const url = await getComprobanteSignedUrl(path, 180);
+      setPreviewUrl(url);
+    } catch (e) {
+      alert(`No se pudo subir el comprobante: ${e.message || e}`);
+    }
+  };
   const onCantidad = (val) => { const n = parseInt(val || "1", 10); setForm(v => ({ ...v, cantidad: Math.min(max, Math.max(min, isNaN(n) ? 1 : n)) })); };
   const submit = async () => {
     try {
@@ -538,7 +579,25 @@ function Reservar() {
           </div>
           <div><label className="block text-sm mb-1">Cantidad de Entradas</label><input type="number" min={min} max={max} className="w-full border rounded-lg px-3 py-2" value={form.cantidad} onChange={(e) => onCantidad(e.target.value)} /><p className="text-xs text-neutral-500 mt-1">{form.tipo === "Sala" ? `Mínimo ${min}` : `Entre ${min} y ${max}`}</p></div>
           <div><label className="block text-sm mb-1">Tipo de Reservación</label><select className="w-full border rounded-lg px-3 py-2" value={form.tipo} onChange={e => setForm(v => ({ ...v, tipo: e.target.value }))}><option>Periquera</option><option>Sala</option></select></div>
-          <div className="sm:col-span-2"><label className="block text-sm mb-1">Comprobante de Pago</label><div className="flex items-center gap-3"><label className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-indigo-600 text-white cursor-pointer"><UploadCloud className="w-4 h-4" /> Seleccionar archivo<input type="file" accept="image/*,application/pdf" className="hidden" onChange={e => onFile(e.target.files?.[0])} /></label><span className="text-sm text-neutral-500 truncate max-w-[60%]">{form.comprobanteUrl ? "Archivo cargado" : "Ningún archivo seleccionado"}</span></div>{form.comprobanteUrl && <div className="mt-3"><img src={form.comprobanteUrl} alt="comprobante" className="max-h-48 rounded border" /></div>}</div>
+          <div className="sm:col-span-2">
+            <label className="block text-sm mb-1">Comprobante de Pago</label>
+            <div className="flex items-center gap-3">
+              <label className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-indigo-600 text-white cursor-pointer">
+                <UploadCloud className="w-4 h-4" /> Seleccionar archivo
+                <input type="file" accept="image/*,application/pdf" className="hidden" onChange={e => onFile(e.target.files?.[0])} />
+              </label>
+              <span className="text-sm text-neutral-500 truncate max-w-[60%]">{form.comprobanteUrl ? "Archivo cargado" : "Ningún archivo seleccionado"}</span>
+            </div>
+            {form.comprobanteUrl && (
+              <div className="mt-3">
+                {previewUrl ? (
+                  <a href={previewUrl} target="_blank" rel="noreferrer" className="text-indigo-600 underline">Ver/Descargar comprobante</a>
+                ) : (
+                  <span className="text-sm text-neutral-500">Comprobante subido.</span>
+                )}
+              </div>
+            )}
+          </div>
         </div>
         <div className="pt-6"><button onClick={submit} className="w-full sm:w-auto px-5 py-3 rounded-xl bg-indigo-600 text-white hover:opacity-90">Enviar Reservación</button></div>
       </div>
@@ -619,7 +678,7 @@ function MiBoleto() {
 }
 
 function AdminPage() {
-  const { isAdmin, eventActive, setEventActive, reservas, generarQRFor, rejectReserva, deleteReserva } = useApp();
+  const { isAdmin, eventActive, setEventActive, reservas, generarQRFor, rejectReserva, deleteReserva, getComprobanteSignedUrl, deleteComprobanteFile } = useApp();
   const [preview, setPreview] = useState(null);
   if (!isAdmin) return <NotFound />;
   return (
@@ -651,7 +710,29 @@ function AdminPage() {
                   <div>{r.carrera} – {r.semestre}°</div>
                   <div>Tipo: <b>{r.tipo}</b></div>
                   <div>Boletos: {r.restantes} / {r.confirmadas}</div>
-                  {r.comprobanteUrl && <button className="text-indigo-600 underline mt-1" onClick={() => setPreview(r.comprobanteUrl)}>Ver Comprobante</button>}
+                  {r.comprobanteUrl && (
+                    <div className="flex items-center gap-3 mt-1">
+                      <button
+                        className="text-indigo-600 underline"
+                        onClick={async () => {
+                          const url = await getComprobanteSignedUrl(r.comprobanteUrl, 300);
+                          if (url) setPreview(url); else alert('No se pudo generar el enlace.');
+                        }}
+                      >
+                        Ver/Descargar
+                      </button>
+                      <button
+                        className="text-red-600 underline"
+                        onClick={async () => {
+                          if (confirm('¿Eliminar comprobante? No afecta la reservación ni el QR.')) {
+                            await deleteComprobanteFile(r.id, r.comprobanteUrl);
+                          }
+                        }}
+                      >
+                        Eliminar comprobante
+                      </button>
+                    </div>
+                  )}
                 </div>
                 <div className="md:col-span-1 flex items-center justify-between md:justify-end gap-3">
                   <span className={`px-3 py-1 rounded-full text-xs ${r.estado === "pendiente" ? "bg-yellow-100 text-yellow-800" : r.estado === "pagado" ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-700"}`}>{r.estado}</span>
@@ -683,7 +764,14 @@ function AdminPage() {
       {preview && (
         <div className="fixed inset-0 bg-black/50 grid place-items-center p-4" onClick={() => setPreview(null)}>
           <div className="bg-white rounded-xl p-3 max-w-3xl w-full" onClick={e => e.stopPropagation()}>
-            <img src={preview} alt="comprobante" className="max-h-[70vh] mx-auto" />
+            {preview && (preview.toLowerCase().includes('.pdf') ? (
+              <iframe src={preview} title="comprobante" className="w-full h-[70vh]" />
+            ) : (
+              <img src={preview} alt="comprobante" className="max-h-[70vh] mx-auto" />
+            ))}
+            <div className="text-center mt-2">
+              <a href={preview || '#'} target="_blank" rel="noreferrer" className="text-indigo-600 underline">Abrir en nueva pestaña</a>
+            </div>
             <div className="text-center pt-2"><button className="px-4 py-2 rounded-lg border" onClick={() => setPreview(null)}>Cerrar</button></div>
           </div>
         </div>
