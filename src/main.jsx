@@ -311,7 +311,7 @@ function Header() {
     <header className="sticky top-0 z-40 bg-white/90 backdrop-blur border-b" style={{ paddingTop: 'env(safe-area-inset-top)' }}>
       <div className="max-w-6xl mx-auto px-4 py-3 flex items-center gap-4">
         <Link to="/" className="font-extrabold tracking-tight text-indigo-600">CESA ITSU</Link>
-        <nav className="ms-2 hidden sm:flex items-center gap-6 text-sm text-neutral-700">
+        <nav className="ms-2 flex flex-wrap items-center gap-4 text-sm text-neutral-700">
           <Link to="/">Inicio</Link>
           <Link to="/reservar">Reservar</Link>
           <Link to="/mi-boleto">Mi Boleto</Link>
