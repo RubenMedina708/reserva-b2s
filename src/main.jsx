@@ -298,17 +298,44 @@ function AppProvider({ children }) {
   };
 
   // --- Storage helpers (comprobantes) ---
-  const uploadComprobante = async (file, emailHint) => {
+  const uploadComprobante = async (file, emailHint, onProgress) => {
     if (!file) throw new Error("Archivo inválido");
     const safeEmail = (emailHint || user?.email || 'anon').replace(/[^a-zA-Z0-9@._-]/g, '_');
     const ts = Date.now();
     const path = `${safeEmail}/${ts}-${file.name}`;
-    const { error } = await supabase.storage.from('comprobantes').upload(path, file, {
-      cacheControl: '3600',
-      upsert: false,
-      contentType: file.type || 'application/octet-stream',
-    });
+
+    // 1) Pedir URL firmada para subir
+    const { data, error } = await supabase.storage
+      .from('comprobantes')
+      .createSignedUploadUrl(path);
     if (error) throw error;
+
+    // 2) Subir con XHR para obtener progreso real
+    await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable && typeof onProgress === 'function') {
+          const pct = Math.max(0, Math.min(100, Math.round((e.loaded / e.total) * 100)));
+          onProgress(pct);
+        }
+      };
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          if (typeof onProgress === 'function') onProgress(100);
+          resolve();
+        } else {
+          reject(new Error('Fallo la subida (status ' + xhr.status + ')'));
+        }
+      };
+      xhr.onerror = () => reject(new Error('Error de red al subir.'));
+      xhr.open('PUT', data.signedUrl);
+      xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+      // Nota: la URL firmada ya contiene token; no es necesario Authorization.
+      // Algunos backends aceptan este header para controlar upsert; mantenemos false.
+      xhr.setRequestHeader('x-upsert', 'false');
+      xhr.send(file);
+    });
+
     return path; // guardamos esta ruta en comprobante_url
   };
 
@@ -514,6 +541,8 @@ function Reservar() {
   const [cantidad, setCantidad] = useState(limitsFor("Periquera").min);
   const [cantidadStr, setCantidadStr] = useState(String(limitsFor("Periquera").min));
   const [previewUrl, setPreviewUrl] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const { min, max } = limitsFor(form.tipo);
   useEffect(() => {
     const n = min;
@@ -522,14 +551,24 @@ function Reservar() {
     setForm(v => ({ ...v, cantidad: n }));
   }, [form.tipo]);
   const onFile = async (f) => {
-    if (!f) { setForm(v => ({ ...v, comprobanteUrl: null })); setPreviewUrl(null); return; }
+    if (!f) {
+      setForm(v => ({ ...v, comprobanteUrl: null }));
+      setPreviewUrl(null);
+      setUploadProgress(0);
+      setUploading(false);
+      return;
+    }
     try {
-      const path = await uploadComprobante(f, user?.email);
+      setUploading(true);
+      setUploadProgress(0);
+      const path = await uploadComprobante(f, user?.email, (p) => setUploadProgress(p));
       setForm(v => ({ ...v, comprobanteUrl: path }));
       const url = await getComprobanteSignedUrl(path, 180);
       setPreviewUrl(url);
     } catch (e) {
       alert(`No se pudo subir el comprobante: ${e.message || e}`);
+    } finally {
+      setUploading(false);
     }
   };
   const onCantidadChange = (value) => {
@@ -625,12 +664,27 @@ function Reservar() {
           <div className="sm:col-span-2">
             <label className="block text-sm mb-1">Comprobante de Pago</label>
             <div className="flex items-center gap-3">
-              <label className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-indigo-600 text-white cursor-pointer">
-                <UploadCloud className="w-4 h-4" /> Seleccionar archivo
-                <input type="file" accept="image/*,application/pdf" className="hidden" onChange={e => onFile(e.target.files?.[0])} />
+              <label className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-indigo-600 text-white cursor-pointer disabled:opacity-50">
+                <UploadCloud className="w-4 h-4" /> {uploading ? 'Subiendo…' : 'Seleccionar archivo'}
+                <input
+                  type="file"
+                  accept="image/*,application/pdf"
+                  className="hidden"
+                  onChange={e => onFile(e.target.files?.[0])}
+                  disabled={uploading}
+                />
               </label>
-              <span className="text-sm text-neutral-500 truncate max-w-[60%]">{form.comprobanteUrl ? "Archivo cargado" : "Ningún archivo seleccionado"}</span>
+              <span className="text-sm text-neutral-500 truncate max-w-[60%]">
+                {uploading
+                  ? `Subiendo ${uploadProgress}%…`
+                  : (form.comprobanteUrl ? "Archivo cargado" : "Ningún archivo seleccionado")}
+              </span>
             </div>
+            {uploading && (
+              <div className="mt-2 w-full max-w-xs h-2 bg-neutral-200 rounded overflow-hidden">
+                <div className="h-full bg-indigo-600 transition-[width] duration-150" style={{ width: `${uploadProgress}%` }} />
+              </div>
+            )}
             {form.comprobanteUrl && (
               <div className="mt-3">
                 {previewUrl ? (
@@ -642,7 +696,15 @@ function Reservar() {
             )}
           </div>
         </div>
-        <div className="pt-6"><button onClick={submit} className="w-full sm:w-auto px-5 py-3 rounded-xl bg-indigo-600 text-white hover:opacity-90">Enviar Reservación</button></div>
+        <div className="pt-6">
+          <button
+            onClick={submit}
+            disabled={uploading}
+            className="w-full sm:w-auto px-5 py-3 rounded-xl bg-indigo-600 text-white hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {uploading ? 'Subiendo comprobante…' : 'Enviar Reservación'}
+          </button>
+        </div>
       </div>
     </Shell>
   );
